@@ -1,0 +1,10 @@
+title       = "musicbrainz"
+baseURL     = "https://musicbrainz-cli.tamnd.com/"
+description = "A command line for musicbrainz."
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/musicbrainz-cli"
