@@ -57,8 +57,16 @@ func TestLocateRecording(t *testing.T) {
 }
 
 func TestLocateUnknownType(t *testing.T) {
-	_, err := Domain{}.Locate("label", "xyz")
+	_, err := Domain{}.Locate("unknown", "xyz")
 	if err == nil {
 		t.Error("expected error for unknown type, got nil")
+	}
+}
+
+func TestLocateLabel(t *testing.T) {
+	got, err := Domain{}.Locate("label", "2c9b9182-cb7e-4d7c-8ef9-0a9d0a16d7b8")
+	want := "https://musicbrainz.org/label/2c9b9182-cb7e-4d7c-8ef9-0a9d0a16d7b8"
+	if err != nil || got != want {
+		t.Errorf("Locate = (%q, %v), want (%q, nil)", got, err, want)
 	}
 }

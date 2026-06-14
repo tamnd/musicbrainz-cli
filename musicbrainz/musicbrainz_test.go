@@ -10,11 +10,29 @@ import (
 	"github.com/tamnd/musicbrainz-cli/musicbrainz"
 )
 
+// --- test data ---
+
 const fakeArtistsJSON = `{
   "count": 2,
   "artists": [
-    {"id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3", "name": "Queen", "type": "Group", "country": "GB", "score": 100},
-    {"id": "f27ec8db-af05-4f36-916e-3d57f91ecf7e", "name": "Michael Jackson", "type": "Person", "country": "US", "score": 85}
+    {
+      "id": "0383dadf-2a4e-4d10-a46a-e9e041da8eb3",
+      "name": "Queen",
+      "type": "Group",
+      "country": "GB",
+      "area": {"name": "United Kingdom"},
+      "life-span": {"begin": "1970", "ended": false},
+      "score": 100
+    },
+    {
+      "id": "f27ec8db-af05-4f36-916e-3d57f91ecf7e",
+      "name": "Michael Jackson",
+      "type": "Person",
+      "country": "US",
+      "area": {"name": "United States"},
+      "life-span": {"begin": "1958-08-29", "end": "2009-06-25", "ended": true},
+      "score": 85
+    }
   ]
 }`
 
@@ -26,7 +44,8 @@ const fakeRecordingsJSON = `{
       "title": "Comfortably Numb",
       "score": 100,
       "length": 587266,
-      "artist-credit": [{"name": "Pink Floyd", "artist": {"id": "83d91898-7763-47d7-b03b-b92132375c47", "name": "Pink Floyd"}}]
+      "artist-credit": [{"name": "Pink Floyd", "artist": {"id": "83d91898-7763-47d7-b03b-b92132375c47", "name": "Pink Floyd"}}],
+      "releases": [{"title": "The Wall", "date": "1979"}]
     },
     {
       "id": "def456",
@@ -38,12 +57,79 @@ const fakeRecordingsJSON = `{
   ]
 }`
 
+const fakeReleasesJSON = `{
+  "count": 1,
+  "releases": [
+    {
+      "id": "b84ee12a-1dc4-4a84-b1c0-b7b159e18174",
+      "title": "OK Computer",
+      "status": "Official",
+      "date": "1997-05-21",
+      "country": "GB",
+      "label-info": [{"label": {"name": "Parlophone"}}],
+      "release-group": {"primary-type": "Album"},
+      "artist-credit": [{"name": "Radiohead", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead"}}],
+      "score": 100
+    }
+  ]
+}`
+
+const fakeReleaseGroupsJSON = `{
+  "count": 1,
+  "release-groups": [
+    {
+      "id": "f5093c06-1a98-4cf3-8b75-4b0c3b0c0b0c",
+      "title": "The Dark Side of the Moon",
+      "primary-type": "Album",
+      "first-release-date": "1973-03-01",
+      "artist-credit": [{"name": "Pink Floyd", "artist": {"id": "83d91898-7763-47d7-b03b-b92132375c47", "name": "Pink Floyd"}}],
+      "score": 100
+    }
+  ]
+}`
+
+const fakeLabelsJSON = `{
+  "count": 1,
+  "labels": [
+    {
+      "id": "2c9b9182-cb7e-4d7c-8ef9-0a9d0a16d7b8",
+      "name": "Parlophone",
+      "type": "Original Production",
+      "country": "GB",
+      "score": 100
+    }
+  ]
+}`
+
+const fakeArtistDetailJSON = `{
+  "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+  "name": "The Beatles",
+  "type": "Group",
+  "country": "GB",
+  "area": {"name": "United Kingdom"},
+  "life-span": {"begin": "1957-07", "end": "1970-04-10", "ended": true},
+  "releases": [
+    {"id": "rel1", "title": "Abbey Road", "date": "1969-09-26", "status": "Official"},
+    {"id": "rel2", "title": "Let It Be", "date": "1970-05-08", "status": "Official"}
+  ]
+}`
+
+// --- helpers ---
+
 func newTestClient(ts *httptest.Server) *musicbrainz.Client {
 	cfg := musicbrainz.DefaultConfig()
 	cfg.BaseURL = ts.URL
 	cfg.Rate = 0
 	return musicbrainz.NewClient(cfg)
 }
+
+func serve(body string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, body)
+	}))
+}
+
+// --- tests ---
 
 func TestArtistsSendsUserAgent(t *testing.T) {
 	var gotUA string
@@ -64,9 +150,7 @@ func TestArtistsSendsUserAgent(t *testing.T) {
 }
 
 func TestArtistsParsesItems(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprint(w, fakeArtistsJSON)
-	}))
+	ts := serve(fakeArtistsJSON)
 	defer ts.Close()
 
 	c := newTestClient(ts)
@@ -81,8 +165,8 @@ func TestArtistsParsesItems(t *testing.T) {
 	if a.Rank != 1 {
 		t.Errorf("Rank = %d, want 1", a.Rank)
 	}
-	if a.ID != "0383dadf-2a4e-4d10-a46a-e9e041da8eb3" {
-		t.Errorf("ID = %q, want 0383dadf-...", a.ID)
+	if a.MBID != "0383dadf-2a4e-4d10-a46a-e9e041da8eb3" {
+		t.Errorf("MBID = %q, unexpected", a.MBID)
 	}
 	if a.Name != "Queen" {
 		t.Errorf("Name = %q, want Queen", a.Name)
@@ -92,6 +176,12 @@ func TestArtistsParsesItems(t *testing.T) {
 	}
 	if a.Country != "GB" {
 		t.Errorf("Country = %q, want GB", a.Country)
+	}
+	if a.Area != "United Kingdom" {
+		t.Errorf("Area = %q, want United Kingdom", a.Area)
+	}
+	if a.BeginDate != "1970" {
+		t.Errorf("BeginDate = %q, want 1970", a.BeginDate)
 	}
 	if a.Score != 100 {
 		t.Errorf("Score = %d, want 100", a.Score)
@@ -103,9 +193,7 @@ func TestArtistsParsesItems(t *testing.T) {
 }
 
 func TestArtistsLimitRespected(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprint(w, fakeArtistsJSON)
-	}))
+	ts := serve(fakeArtistsJSON)
 	defer ts.Close()
 
 	c := newTestClient(ts)
@@ -145,10 +233,26 @@ func TestArtistsRetriesOn503(t *testing.T) {
 	}
 }
 
-func TestRecordingsParsesItems(t *testing.T) {
+func TestArtistsNonRetryable4xx(t *testing.T) {
+	hits := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprint(w, fakeRecordingsJSON)
+		hits++
+		w.WriteHeader(http.StatusNotFound)
 	}))
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	_, err := c.Artists(context.Background(), "notfound", 0)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if hits != 1 {
+		t.Errorf("server saw %d hits, want 1 (no retry on 404)", hits)
+	}
+}
+
+func TestRecordingsParsesItems(t *testing.T) {
+	ts := serve(fakeRecordingsJSON)
 	defer ts.Close()
 
 	c := newTestClient(ts)
@@ -163,17 +267,20 @@ func TestRecordingsParsesItems(t *testing.T) {
 	if r.Rank != 1 {
 		t.Errorf("Rank = %d, want 1", r.Rank)
 	}
-	if r.ID != "abc123" {
-		t.Errorf("ID = %q, want abc123", r.ID)
+	if r.MBID != "abc123" {
+		t.Errorf("MBID = %q, want abc123", r.MBID)
 	}
 	if r.Title != "Comfortably Numb" {
 		t.Errorf("Title = %q, want Comfortably Numb", r.Title)
 	}
-	if r.Artist != "Pink Floyd" {
-		t.Errorf("Artist = %q, want Pink Floyd", r.Artist)
+	if r.ArtistCredit != "Pink Floyd" {
+		t.Errorf("ArtistCredit = %q, want Pink Floyd", r.ArtistCredit)
 	}
 	if r.LengthMs != 587266 {
 		t.Errorf("LengthMs = %d, want 587266", r.LengthMs)
+	}
+	if r.ReleaseTitle != "The Wall" {
+		t.Errorf("ReleaseTitle = %q, want The Wall", r.ReleaseTitle)
 	}
 	if r.Score != 100 {
 		t.Errorf("Score = %d, want 100", r.Score)
@@ -181,5 +288,121 @@ func TestRecordingsParsesItems(t *testing.T) {
 	wantURL := "https://musicbrainz.org/recording/abc123"
 	if r.URL != wantURL {
 		t.Errorf("URL = %q, want %q", r.URL, wantURL)
+	}
+}
+
+func TestReleasesParsesItems(t *testing.T) {
+	ts := serve(fakeReleasesJSON)
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	items, err := c.Releases(context.Background(), "ok computer radiohead", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	r := items[0]
+	if r.MBID != "b84ee12a-1dc4-4a84-b1c0-b7b159e18174" {
+		t.Errorf("MBID = %q, unexpected", r.MBID)
+	}
+	if r.Title != "OK Computer" {
+		t.Errorf("Title = %q, want OK Computer", r.Title)
+	}
+	if r.Status != "Official" {
+		t.Errorf("Status = %q, want Official", r.Status)
+	}
+	if r.Label != "Parlophone" {
+		t.Errorf("Label = %q, want Parlophone", r.Label)
+	}
+	if r.Type != "Album" {
+		t.Errorf("Type = %q, want Album", r.Type)
+	}
+	if r.ArtistCredit != "Radiohead" {
+		t.Errorf("ArtistCredit = %q, want Radiohead", r.ArtistCredit)
+	}
+	if r.Score != 100 {
+		t.Errorf("Score = %d, want 100", r.Score)
+	}
+}
+
+func TestReleaseGroupsParsesItems(t *testing.T) {
+	ts := serve(fakeReleaseGroupsJSON)
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	items, err := c.ReleaseGroups(context.Background(), "dark side of the moon", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	rg := items[0]
+	if rg.Title != "The Dark Side of the Moon" {
+		t.Errorf("Title = %q, unexpected", rg.Title)
+	}
+	if rg.Type != "Album" {
+		t.Errorf("Type = %q, want Album", rg.Type)
+	}
+	if rg.FirstReleaseDate != "1973-03-01" {
+		t.Errorf("FirstReleaseDate = %q, want 1973-03-01", rg.FirstReleaseDate)
+	}
+	if rg.ArtistCredit != "Pink Floyd" {
+		t.Errorf("ArtistCredit = %q, want Pink Floyd", rg.ArtistCredit)
+	}
+}
+
+func TestLabelsParsesItems(t *testing.T) {
+	ts := serve(fakeLabelsJSON)
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	items, err := c.Labels(context.Background(), "parlophone", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	l := items[0]
+	if l.Name != "Parlophone" {
+		t.Errorf("Name = %q, want Parlophone", l.Name)
+	}
+	if l.Type != "Original Production" {
+		t.Errorf("Type = %q, want Original Production", l.Type)
+	}
+	if l.Country != "GB" {
+		t.Errorf("Country = %q, want GB", l.Country)
+	}
+}
+
+func TestGetArtistParsesDetail(t *testing.T) {
+	ts := serve(fakeArtistDetailJSON)
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	detail, err := c.GetArtist(context.Background(), "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Name != "The Beatles" {
+		t.Errorf("Name = %q, want The Beatles", detail.Name)
+	}
+	if detail.MBID != "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d" {
+		t.Errorf("MBID = %q, unexpected", detail.MBID)
+	}
+	if detail.Country != "GB" {
+		t.Errorf("Country = %q, want GB", detail.Country)
+	}
+	if detail.BeginDate != "1957-07" {
+		t.Errorf("BeginDate = %q, want 1957-07", detail.BeginDate)
+	}
+	if len(detail.Releases) != 2 {
+		t.Fatalf("len(Releases) = %d, want 2", len(detail.Releases))
+	}
+	if detail.Releases[0].Title != "Abbey Road" {
+		t.Errorf("Releases[0].Title = %q, want Abbey Road", detail.Releases[0].Title)
 	}
 }

@@ -2,7 +2,6 @@ package musicbrainz
 
 import (
 	"context"
-	"time"
 
 	"github.com/tamnd/any-cli/kit"
 	"github.com/tamnd/any-cli/kit/errs"
@@ -28,9 +27,12 @@ func (Domain) Info() kit.DomainInfo {
 		Hosts:  []string{Host},
 		Identity: kit.Identity{
 			Binary: "musicbrainz",
-			Short:  "MusicBrainz music metadata — artists, recordings, and more",
-			Long: `musicbrainz searches the MusicBrainz open music database for artists
-and recordings. No API key required. Rate limit: 1 req/s.`,
+			Short:  "MusicBrainz music metadata — artists, recordings, releases, labels, and more",
+			Long: `musicbrainz searches the MusicBrainz open music database.
+
+Search artists, recordings (tracks), releases (albums), release groups, and
+labels. Look up any entity by its MBID (MusicBrainz Identifier).
+No API key required. Rate limit: 1 req/s.`,
 			Site: Host,
 			Repo: "https://github.com/tamnd/musicbrainz-cli",
 		},
@@ -58,6 +60,42 @@ func (Domain) Register(app *kit.App) {
 		Summary: "Search for recordings (tracks) by title",
 		Args:    []kit.Arg{{Name: "query", Help: "title or Lucene query (e.g. title:comfortably+numb AND artist:pink+floyd)"}},
 	}, recordingOp)
+
+	// release: search for releases (albums) by title or Lucene query
+	kit.Handle(app, kit.OpMeta{
+		Name:    "release",
+		Group:   "read",
+		List:    true,
+		Summary: "Search for releases (albums) by title",
+		Args:    []kit.Arg{{Name: "query", Help: "title or Lucene query (e.g. title:OK+Computer AND artist:radiohead)"}},
+	}, releaseOp)
+
+	// release-group: search for release groups
+	kit.Handle(app, kit.OpMeta{
+		Name:    "release-group",
+		Group:   "read",
+		List:    true,
+		Summary: "Search for release groups by title",
+		Args:    []kit.Arg{{Name: "query", Help: "title or Lucene query"}},
+	}, releaseGroupOp)
+
+	// label: search for labels
+	kit.Handle(app, kit.OpMeta{
+		Name:    "label",
+		Group:   "read",
+		List:    true,
+		Summary: "Search for record labels by name",
+		Args:    []kit.Arg{{Name: "query", Help: "label name or Lucene query"}},
+	}, labelOp)
+
+	// get artist: lookup artist by MBID with releases
+	kit.Handle(app, kit.OpMeta{
+		Name:    "get-artist",
+		Group:   "read",
+		Single:  true,
+		Summary: "Get full artist record by MBID (includes releases)",
+		Args:    []kit.Arg{{Name: "mbid", Help: "MusicBrainz Identifier (UUID) for the artist"}},
+	}, getArtistOp)
 }
 
 // newClient builds the client from host-resolved config.
@@ -80,54 +118,90 @@ func newClient(_ context.Context, cfg kit.Config) (any, error) {
 
 // --- inputs ---
 
-type artistInput struct {
-	Query  string        `kit:"arg" help:"artist name or Lucene query"`
-	Limit  int           `kit:"flag,inherit" help:"max results (default 10, max 100)"`
-	Delay  time.Duration `kit:"flag,inherit" help:"minimum spacing between requests"`
-	Client *Client       `kit:"inject"`
+type queryInput struct {
+	Query  string  `kit:"arg" help:"search query"`
+	Limit  int     `kit:"flag,inherit" help:"max results (default 10, max 100)"`
+	Client *Client `kit:"inject"`
 }
 
-type recordingInput struct {
-	Query  string        `kit:"arg" help:"recording title or Lucene query"`
-	Limit  int           `kit:"flag,inherit" help:"max results (default 10, max 100)"`
-	Delay  time.Duration `kit:"flag,inherit" help:"minimum spacing between requests"`
-	Client *Client       `kit:"inject"`
+type mbidInput struct {
+	MBID   string  `kit:"arg" help:"MusicBrainz Identifier (UUID)"`
+	Client *Client `kit:"inject"`
 }
 
 // --- handlers ---
 
-func artistOp(ctx context.Context, in artistInput, emit func(Artist) error) error {
-	limit := in.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	items, err := in.Client.Artists(ctx, in.Query, limit)
+func artistOp(ctx context.Context, in queryInput, emit func(*Artist) error) error {
+	items, err := in.Client.Artists(ctx, in.Query, in.Limit)
 	if err != nil {
-		return mapErr(err)
+		return err
 	}
-	for _, item := range items {
-		if err := emit(item); err != nil {
+	for i := range items {
+		if err := emit(&items[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func recordingOp(ctx context.Context, in recordingInput, emit func(Recording) error) error {
-	limit := in.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	items, err := in.Client.Recordings(ctx, in.Query, limit)
+func recordingOp(ctx context.Context, in queryInput, emit func(*Recording) error) error {
+	items, err := in.Client.Recordings(ctx, in.Query, in.Limit)
 	if err != nil {
-		return mapErr(err)
+		return err
 	}
-	for _, item := range items {
-		if err := emit(item); err != nil {
+	for i := range items {
+		if err := emit(&items[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func releaseOp(ctx context.Context, in queryInput, emit func(*Release) error) error {
+	items, err := in.Client.Releases(ctx, in.Query, in.Limit)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if err := emit(&items[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func releaseGroupOp(ctx context.Context, in queryInput, emit func(*ReleaseGroup) error) error {
+	items, err := in.Client.ReleaseGroups(ctx, in.Query, in.Limit)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if err := emit(&items[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func labelOp(ctx context.Context, in queryInput, emit func(*Label) error) error {
+	items, err := in.Client.Labels(ctx, in.Query, in.Limit)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if err := emit(&items[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func getArtistOp(ctx context.Context, in mbidInput, emit func(*ArtistDetail) error) error {
+	detail, err := in.Client.GetArtist(ctx, in.MBID)
+	if err != nil {
+		return err
+	}
+	return emit(detail)
 }
 
 // --- Resolver: pure string functions, no network ---
@@ -138,7 +212,6 @@ func (Domain) Classify(input string) (uriType, id string, err error) {
 	if input == "" {
 		return "", "", errs.Usage("empty musicbrainz reference")
 	}
-	// Default to artist type for bare UUIDs or names.
 	return "artist", input, nil
 }
 
@@ -149,12 +222,13 @@ func (Domain) Locate(uriType, id string) (string, error) {
 		return "https://musicbrainz.org/artist/" + id, nil
 	case "recording":
 		return "https://musicbrainz.org/recording/" + id, nil
+	case "release":
+		return "https://musicbrainz.org/release/" + id, nil
+	case "release-group":
+		return "https://musicbrainz.org/release-group/" + id, nil
+	case "label":
+		return "https://musicbrainz.org/label/" + id, nil
 	default:
 		return "", errs.Usage("musicbrainz has no resource type %q", uriType)
 	}
-}
-
-// mapErr converts a library error into the kit error kind.
-func mapErr(err error) error {
-	return err
 }
