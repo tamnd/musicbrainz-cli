@@ -96,6 +96,24 @@ func (Domain) Register(app *kit.App) {
 		Summary: "Get full artist record by MBID (includes releases)",
 		Args:    []kit.Arg{{Name: "mbid", Help: "MusicBrainz Identifier (UUID) for the artist"}},
 	}, getArtistOp)
+
+	// get recording: lookup recording by MBID
+	kit.Handle(app, kit.OpMeta{
+		Name:    "get-recording",
+		Group:   "read",
+		Single:  true,
+		Summary: "Get full recording record by MBID (includes artist credits and releases)",
+		Args:    []kit.Arg{{Name: "mbid", Help: "MusicBrainz Identifier (UUID) for the recording"}},
+	}, getRecordingOp)
+
+	// get release: lookup release by MBID
+	kit.Handle(app, kit.OpMeta{
+		Name:    "get-release",
+		Group:   "read",
+		Single:  true,
+		Summary: "Get full release record by MBID (includes artist credits and label)",
+		Args:    []kit.Arg{{Name: "mbid", Help: "MusicBrainz Identifier (UUID) for the release"}},
+	}, getReleaseOp)
 }
 
 // newClient builds the client from host-resolved config.
@@ -198,6 +216,22 @@ func labelOp(ctx context.Context, in queryInput, emit func(*Label) error) error 
 
 func getArtistOp(ctx context.Context, in mbidInput, emit func(*ArtistDetail) error) error {
 	detail, err := in.Client.GetArtist(ctx, in.MBID)
+	if err != nil {
+		return err
+	}
+	return emit(detail)
+}
+
+func getRecordingOp(ctx context.Context, in mbidInput, emit func(*RecordingDetail) error) error {
+	detail, err := in.Client.GetRecording(ctx, in.MBID)
+	if err != nil {
+		return err
+	}
+	return emit(detail)
+}
+
+func getReleaseOp(ctx context.Context, in mbidInput, emit func(*ReleaseDetail) error) error {
+	detail, err := in.Client.GetRelease(ctx, in.MBID)
 	if err != nil {
 		return err
 	}
