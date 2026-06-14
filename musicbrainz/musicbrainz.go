@@ -1,62 +1,147 @@
 // Package musicbrainz is the library behind the musicbrainz command line:
-// the HTTP client, request shaping, and the typed data models for musicbrainz.
+// the HTTP client, request shaping, and the typed data models for the MusicBrainz
+// open music metadata database (artists, recordings).
 //
-// The Client here is the spine every command shares. It sets a real
-// User-Agent, paces requests so a busy session stays polite, and retries the
-// transient failures (429 and 5xx) that any public site throws under load.
-// Build your endpoint calls and JSON decoding on top of it.
+// MusicBrainz is rate-limited to 1 request per second. The Client paces
+// requests at 1100 ms intervals and retries 503/429/5xx with exponential
+// backoff. A descriptive User-Agent header is required by the API terms.
 package musicbrainz
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
-	"strings"
+	neturl "net/url"
+	"sync"
 	"time"
 )
 
-// DefaultUserAgent identifies the client to musicbrainz. A real, honest
-// User-Agent is both polite and the thing most likely to keep you unblocked.
-const DefaultUserAgent = "musicbrainz/dev (+https://github.com/tamnd/musicbrainz-cli)"
+// Host is the site this client talks to.
+const Host = "musicbrainz.org"
 
-// Host is the site this client talks to, and the host the URI driver in
-// domain.go claims. The scaffold points it at musicbrainz.com; change it once you
-// know the real endpoints you want to read.
-const Host = "musicbrainz.com"
-
-// BaseURL is the root every request is built from.
-const BaseURL = "https://" + Host
-
-// Client talks to musicbrainz over HTTP.
-type Client struct {
-	HTTP      *http.Client
+// Config holds all tunable parameters for the Client.
+type Config struct {
+	BaseURL   string
 	UserAgent string
-	// Rate is the minimum gap between requests. Zero means no pacing.
-	Rate    time.Duration
-	Retries int
-
-	last time.Time
+	Rate      time.Duration
+	Timeout   time.Duration
+	Retries   int
 }
 
-// NewClient returns a Client with sensible defaults: a 30s timeout, a 200ms
-// minimum gap between requests, and five retries on transient errors.
-func NewClient() *Client {
-	return &Client{
-		HTTP:      &http.Client{Timeout: 30 * time.Second},
-		UserAgent: DefaultUserAgent,
-		Rate:      200 * time.Millisecond,
-		Retries:   5,
+// DefaultConfig returns a Config with the MusicBrainz public API base URL,
+// a descriptive User-Agent, and a 1100 ms rate floor (10% above the 1 req/s
+// limit).
+func DefaultConfig() Config {
+	return Config{
+		BaseURL:   "https://musicbrainz.org/ws/2",
+		UserAgent: "musicbrainz-cli/dev (https://github.com/tamnd/musicbrainz-cli; contact@example.com)",
+		Rate:      1100 * time.Millisecond,
+		Timeout:   30 * time.Second,
+		Retries:   3,
 	}
 }
 
-// Get fetches url and returns the response body. It paces and retries according
-// to the client's settings. The caller owns nothing extra; the body is read
-// fully and closed here.
-func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
+// Client talks to MusicBrainz over HTTP.
+type Client struct {
+	cfg  Config
+	http *http.Client
+	mu   sync.Mutex
+	last time.Time
+}
+
+// NewClient returns a Client configured with cfg.
+func NewClient(cfg Config) *Client {
+	return &Client{
+		cfg:  cfg,
+		http: &http.Client{Timeout: cfg.Timeout},
+	}
+}
+
+// Artists searches MusicBrainz for artists matching query.
+// It returns at most limit results (pass 0 for the default of 10; max 100).
+func (c *Client) Artists(ctx context.Context, query string, limit int) ([]Artist, error) {
+	n := limit
+	if n <= 0 {
+		n = 10
+	}
+	if n > 100 {
+		n = 100
+	}
+	u := fmt.Sprintf("%s/artist?query=%s&fmt=json&limit=%d",
+		c.cfg.BaseURL, neturl.QueryEscape(query), n)
+	body, err := c.get(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	var resp artistSearchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode artists: %w", err)
+	}
+	out := make([]Artist, 0, len(resp.Artists))
+	for i, a := range resp.Artists {
+		out = append(out, Artist{
+			Rank:    i + 1,
+			ID:      a.ID,
+			Name:    a.Name,
+			Type:    a.Type,
+			Country: a.Country,
+			Score:   a.Score,
+			URL:     "https://musicbrainz.org/artist/" + a.ID,
+		})
+	}
+	if limit > 0 && limit < len(out) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// Recordings searches MusicBrainz for recordings matching query.
+// It returns at most limit results (pass 0 for the default of 10; max 100).
+func (c *Client) Recordings(ctx context.Context, query string, limit int) ([]Recording, error) {
+	n := limit
+	if n <= 0 {
+		n = 10
+	}
+	if n > 100 {
+		n = 100
+	}
+	u := fmt.Sprintf("%s/recording?query=%s&fmt=json&limit=%d",
+		c.cfg.BaseURL, neturl.QueryEscape(query), n)
+	body, err := c.get(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	var resp recordingSearchResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode recordings: %w", err)
+	}
+	out := make([]Recording, 0, len(resp.Recordings))
+	for i, r := range resp.Recordings {
+		artist := ""
+		if len(r.ArtistCredit) > 0 {
+			artist = r.ArtistCredit[0].Name
+		}
+		out = append(out, Recording{
+			Rank:     i + 1,
+			ID:       r.ID,
+			Title:    r.Title,
+			Artist:   artist,
+			LengthMs: r.Length,
+			Score:    r.Score,
+			URL:      "https://musicbrainz.org/recording/" + r.ID,
+		})
+	}
+	if limit > 0 && limit < len(out) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 	var lastErr error
-	for attempt := 0; attempt <= c.Retries; attempt++ {
+	for attempt := 0; attempt <= c.cfg.Retries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
@@ -76,125 +161,40 @@ func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 	return nil, fmt.Errorf("get %s: %w", url, lastErr)
 }
 
-func (c *Client) do(ctx context.Context, url string) (body []byte, retry bool, err error) {
+func (c *Client) do(ctx context.Context, rawURL string) ([]byte, bool, error) {
 	c.pace()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("User-Agent", c.UserAgent)
-
-	resp, err := c.HTTP.Do(req)
+	req.Header.Set("User-Agent", c.cfg.UserAgent)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, true, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 		return nil, true, fmt.Errorf("http %d", resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, false, fmt.Errorf("http %d", resp.StatusCode)
 	}
-
 	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, true, err
-	}
-	return b, false, nil
+	return b, err != nil, err
 }
 
-// pace blocks until at least Rate has passed since the previous request.
 func (c *Client) pace() {
-	if c.Rate <= 0 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cfg.Rate <= 0 {
 		return
 	}
-	if wait := c.Rate - time.Since(c.last); wait > 0 {
+	if wait := c.cfg.Rate - time.Since(c.last); wait > 0 {
 		time.Sleep(wait)
 	}
 	c.last = time.Now()
 }
 
 func backoff(attempt int) time.Duration {
-	d := time.Duration(attempt) * 500 * time.Millisecond
-	if d > 5*time.Second {
-		d = 5 * time.Second
-	}
-	return d
-}
-
-// Page is the scaffold's one example record: a single page, addressed by the
-// path that names it on musicbrainz.com. It is a stand-in for the typed records you
-// will model from the real musicbrainz endpoints. The kit struct tags make it
-// addressable as a resource URI (see domain.go): ID is the URI id, and Body is
-// the long text `musicbrainz cat` and the Markdown export print.
-type Page struct {
-	ID    string `json:"id" kit:"id"`
-	URL   string `json:"url"`
-	Title string `json:"title,omitempty"`
-	Body  string `json:"body,omitempty" kit:"body"`
-}
-
-// GetPage fetches one page by its path (for example "wiki/Go") and returns it as
-// a record. The scaffold keeps a plain-text preview of the response as the body;
-// replace the parsing with the real fields once you know the endpoint's shape.
-func (c *Client) GetPage(ctx context.Context, path string) (*Page, error) {
-	path = strings.Trim(path, "/")
-	url := BaseURL + "/" + path
-	body, err := c.Get(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-	return &Page{ID: path, URL: url, Title: path, Body: pageText(body)}, nil
-}
-
-// PageLinks fetches a page and returns the same-host pages it links to, as page
-// stubs. It shows the member-listing pattern the URI driver relies on: every
-// stub carries enough (an id and a URL) to be addressed and followed on its own.
-func (c *Client) PageLinks(ctx context.Context, path string, limit int) ([]*Page, error) {
-	path = strings.Trim(path, "/")
-	body, err := c.Get(ctx, BaseURL+"/"+path)
-	if err != nil {
-		return nil, err
-	}
-	var out []*Page
-	seen := map[string]bool{}
-	for _, p := range linkPaths(body) {
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, &Page{ID: p, URL: BaseURL + "/" + p})
-		if limit > 0 && len(out) >= limit {
-			break
-		}
-	}
-	return out, nil
-}
-
-var (
-	hrefRE = regexp.MustCompile(`href="(/[^":#?]+)"`)
-	tagRE  = regexp.MustCompile(`<[^>]+>`)
-)
-
-// linkPaths pulls the relative link targets out of an HTML response, so a list
-// op can turn each into an addressable page stub.
-func linkPaths(body []byte) []string {
-	var out []string
-	for _, m := range hrefRE.FindAllSubmatch(body, -1) {
-		if p := strings.Trim(string(m[1]), "/"); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-// pageText reduces an HTML response to a short plain-text preview, a stand-in
-// for the typed extract a real endpoint would hand you.
-func pageText(body []byte) string {
-	s := strings.Join(strings.Fields(tagRE.ReplaceAllString(string(body), " ")), " ")
-	if len(s) > 500 {
-		s = s[:500]
-	}
-	return s
+	return min(time.Duration(attempt)*500*time.Millisecond, 5*time.Second)
 }
