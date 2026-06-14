@@ -406,3 +406,100 @@ func TestGetArtistParsesDetail(t *testing.T) {
 		t.Errorf("Releases[0].Title = %q, want Abbey Road", detail.Releases[0].Title)
 	}
 }
+
+const fakeRecordingDetailJSON = `{
+  "id": "29db0dec-2caf-4c0e-b542-20c91b8d7eec",
+  "title": "Smells Like Teen Spirit",
+  "length": 277000,
+  "first-release-date": "1991-09-10",
+  "artist-credit": [{"name": "Nirvana", "artist": {"id": "5b11f4ce-a62d-471e-81fc-a69a8278c7da", "name": "Nirvana"}}],
+  "releases": [
+    {"id": "a7ffd0c7-3d24-3d18-b97e-49fc83cf8c97", "title": "Nevermind", "date": "1991-09-24", "status": "Official"}
+  ]
+}`
+
+const fakeReleaseDetailJSON = `{
+  "id": "a7ffd0c7-3d24-3d18-b97e-49fc83cf8c97",
+  "title": "Nevermind",
+  "status": "Official",
+  "date": "1991-09-24",
+  "country": "US",
+  "label-info": [{"label": {"name": "DGC Records"}}],
+  "release-group": {"primary-type": "Album"},
+  "artist-credit": [{"name": "Nirvana", "artist": {"id": "5b11f4ce-a62d-471e-81fc-a69a8278c7da", "name": "Nirvana"}}]
+}`
+
+func TestGetRecordingParsesDetail(t *testing.T) {
+	ts := serve(fakeRecordingDetailJSON)
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	detail, err := c.GetRecording(context.Background(), "29db0dec-2caf-4c0e-b542-20c91b8d7eec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.MBID != "29db0dec-2caf-4c0e-b542-20c91b8d7eec" {
+		t.Errorf("MBID = %q, unexpected", detail.MBID)
+	}
+	if detail.Title != "Smells Like Teen Spirit" {
+		t.Errorf("Title = %q, want Smells Like Teen Spirit", detail.Title)
+	}
+	if detail.LengthMs != 277000 {
+		t.Errorf("LengthMs = %d, want 277000", detail.LengthMs)
+	}
+	if detail.FirstRelease != "1991-09-10" {
+		t.Errorf("FirstRelease = %q, want 1991-09-10", detail.FirstRelease)
+	}
+	if detail.ArtistCredit != "Nirvana" {
+		t.Errorf("ArtistCredit = %q, want Nirvana", detail.ArtistCredit)
+	}
+	if len(detail.Releases) != 1 {
+		t.Fatalf("len(Releases) = %d, want 1", len(detail.Releases))
+	}
+	if detail.Releases[0].Title != "Nevermind" {
+		t.Errorf("Releases[0].Title = %q, want Nevermind", detail.Releases[0].Title)
+	}
+	wantURL := "https://musicbrainz.org/recording/29db0dec-2caf-4c0e-b542-20c91b8d7eec"
+	if detail.URL != wantURL {
+		t.Errorf("URL = %q, want %q", detail.URL, wantURL)
+	}
+}
+
+func TestGetReleaseParsesDetail(t *testing.T) {
+	ts := serve(fakeReleaseDetailJSON)
+	defer ts.Close()
+
+	c := newTestClient(ts)
+	detail, err := c.GetRelease(context.Background(), "a7ffd0c7-3d24-3d18-b97e-49fc83cf8c97")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.MBID != "a7ffd0c7-3d24-3d18-b97e-49fc83cf8c97" {
+		t.Errorf("MBID = %q, unexpected", detail.MBID)
+	}
+	if detail.Title != "Nevermind" {
+		t.Errorf("Title = %q, want Nevermind", detail.Title)
+	}
+	if detail.Status != "Official" {
+		t.Errorf("Status = %q, want Official", detail.Status)
+	}
+	if detail.Date != "1991-09-24" {
+		t.Errorf("Date = %q, want 1991-09-24", detail.Date)
+	}
+	if detail.Country != "US" {
+		t.Errorf("Country = %q, want US", detail.Country)
+	}
+	if detail.Label != "DGC Records" {
+		t.Errorf("Label = %q, want DGC Records", detail.Label)
+	}
+	if detail.Type != "Album" {
+		t.Errorf("Type = %q, want Album", detail.Type)
+	}
+	if detail.ArtistCredit != "Nirvana" {
+		t.Errorf("ArtistCredit = %q, want Nirvana", detail.ArtistCredit)
+	}
+	wantURL := "https://musicbrainz.org/release/a7ffd0c7-3d24-3d18-b97e-49fc83cf8c97"
+	if detail.URL != wantURL {
+		t.Errorf("URL = %q, want %q", detail.URL, wantURL)
+	}
+}

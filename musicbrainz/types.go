@@ -78,12 +78,36 @@ type ArtistDetail struct {
 	Releases  []ReleaseStub   `json:"releases"`
 }
 
-// ReleaseStub is a brief release summary embedded in ArtistDetail.
+// ReleaseStub is a brief release summary embedded in ArtistDetail and RecordingDetail.
 type ReleaseStub struct {
 	MBID   string `json:"mbid"`
 	Title  string `json:"title"`
 	Date   string `json:"date"`
 	Status string `json:"status"`
+}
+
+// RecordingDetail is the full recording record from a lookup by MBID.
+type RecordingDetail struct {
+	MBID         string        `json:"mbid"`
+	Title        string        `json:"title"`
+	LengthMs     int           `json:"length_ms"`
+	FirstRelease string        `json:"first_release_date"`
+	ArtistCredit string        `json:"artist_credit"`
+	URL          string        `json:"url"`
+	Releases     []ReleaseStub `json:"releases"`
+}
+
+// ReleaseDetail is the full release record from a lookup by MBID.
+type ReleaseDetail struct {
+	MBID         string `json:"mbid"`
+	Title        string `json:"title"`
+	Status       string `json:"status"`
+	Date         string `json:"date"`
+	Country      string `json:"country"`
+	Label        string `json:"label"`
+	Type         string `json:"type"`
+	ArtistCredit string `json:"artist_credit"`
+	URL          string `json:"url"`
 }
 
 // --- wire types (unexported, only used inside musicbrainz.go for JSON decode) ---
@@ -213,4 +237,24 @@ type wireRelease struct {
 	Title  string `json:"title"`
 	Date   string `json:"date"`
 	Status string `json:"status"`
+}
+
+type wireRecordingDetail struct {
+	ID               string        `json:"id"`
+	Title            string        `json:"title"`
+	Length           int           `json:"length"`
+	FirstReleaseDate string        `json:"first-release-date"`
+	ArtistCredit     []creditItem  `json:"artist-credit"`
+	Releases         []wireRelease `json:"releases"`
+}
+
+type wireReleaseDetail struct {
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Status       string           `json:"status"`
+	Date         string           `json:"date"`
+	Country      string           `json:"country"`
+	LabelInfo    []wireLabelInfo  `json:"label-info"`
+	ReleaseGroup wireReleaseGroup `json:"release-group"`
+	ArtistCredit []creditItem     `json:"artist-credit"`
 }

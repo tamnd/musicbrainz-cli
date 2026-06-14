@@ -258,6 +258,67 @@ func (c *Client) GetArtist(ctx context.Context, mbid string) (*ArtistDetail, err
 	}, nil
 }
 
+// GetRecording fetches a full recording record by MBID.
+func (c *Client) GetRecording(ctx context.Context, mbid string) (*RecordingDetail, error) {
+	u := fmt.Sprintf("%s/recording/%s?inc=artist-credits+releases&fmt=json",
+		c.cfg.BaseURL, neturl.PathEscape(mbid))
+	body, err := c.get(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	var w wireRecordingDetail
+	if err := json.Unmarshal(body, &w); err != nil {
+		return nil, fmt.Errorf("decode recording %s: %w", mbid, err)
+	}
+	releases := make([]ReleaseStub, 0, len(w.Releases))
+	for _, r := range w.Releases {
+		releases = append(releases, ReleaseStub{
+			MBID:   r.ID,
+			Title:  r.Title,
+			Date:   r.Date,
+			Status: r.Status,
+		})
+	}
+	return &RecordingDetail{
+		MBID:         w.ID,
+		Title:        w.Title,
+		LengthMs:     w.Length,
+		FirstRelease: w.FirstReleaseDate,
+		ArtistCredit: joinCredits(w.ArtistCredit),
+		URL:          "https://musicbrainz.org/recording/" + w.ID,
+		Releases:     releases,
+	}, nil
+}
+
+// GetRelease fetches a full release record by MBID.
+func (c *Client) GetRelease(ctx context.Context, mbid string) (*ReleaseDetail, error) {
+	u := fmt.Sprintf("%s/release/%s?inc=artist-credits+labels&fmt=json",
+		c.cfg.BaseURL, neturl.PathEscape(mbid))
+	body, err := c.get(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	var w wireReleaseDetail
+	if err := json.Unmarshal(body, &w); err != nil {
+		return nil, fmt.Errorf("decode release %s: %w", mbid, err)
+	}
+	label := ""
+	if len(w.LabelInfo) > 0 {
+		label = w.LabelInfo[0].Label.Name
+	}
+	return &ReleaseDetail{
+		MBID:         w.ID,
+		Title:        w.Title,
+		Status:       w.Status,
+		Date:         w.Date,
+		Country:      w.Country,
+		Label:        label,
+		Type:         w.ReleaseGroup.PrimaryType,
+		ArtistCredit: joinCredits(w.ArtistCredit),
+		URL:          "https://musicbrainz.org/release/" + w.ID,
+	}, nil
+}
+
 // --- HTTP internals ---
 
 func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
